@@ -1,0 +1,510 @@
+Below is a **developer-facing brief** you can hand off as a “cloud hosting hedge” spec for **OpenClaw (aka Moltbot/Clawdbot)**—MVP-first, but designed so it can evolve into a **headless always-on controller + on-demand GUI/GPU workers** (“Gas Town / Claude factory”).
+
+---
+
+# Developer Brief: Self-Hosted OpenClaw / Moltbot Cloud Hedge (MVP → Scalable)
+
+## 0) Goal (what we’re building)
+
+Stand up a **low-effort, always-available** OpenClaw deployment that:
+
+* runs **24/7** with minimal babysitting
+* can be administered remotely (prefer “visual desktop” convenience like **Parsec**, but alternatives OK)
+* has strong **secret protection + kill-switch**
+* can later split into **always-on controller** + **on-demand workers** (optionally GPU + full GUI)
+* treats “provider/MSP can see the VM” as a reality; mitigate by *design*, not hope
+
+Pulumi’s “deploy OpenClaw on AWS or Hetzner securely with Pulumi + Tailscale” guide is our baseline IaC pattern. ([pulumi][1])
+
+---
+
+## 1) Wishlist (include even stretch items)
+
+### Must-have
+
+1. **Private-by-default networking**
+
+   * No public OpenClaw ports exposed; access only over private overlay (Tailscale or equivalent). (OpenClaw gateway + browser automation ports are called out in the Pulumi guide.) ([pulumi][1])
+2. **Always-on reliability**
+
+   * systemd service for auto-restart after crash/reboot; persistent disk/volume for state.
+3. **Remote admin**
+
+   * SSH always (prefer via Tailscale SSH), plus a “desktop option” for convenience.
+4. **Secrets protection + rotation plan**
+
+   * API keys, Discord tokens, etc. stored in a secrets manager or equivalent—*not* sitting around in plaintext for long.
+5. **Kill-switch / emergency shutdown**
+
+   * One action that *immediately* cuts access + stops agent execution.
+6. **Bounded “employee” credentials**
+
+   * Separate “agent accounts” for Discord/Slack/etc with minimum privileges; assume compromise is possible.
+
+### Should-have
+
+1. **Controller + Worker split**
+
+   * headless controller stays up; workers boot only when needed (GUI automation, heavy tasks, GPU).
+2. **On-demand GUI worker**
+
+   * Ability to “bring up a full desktop” when the agent needs human-like browsing or when the user wants to drop in.
+3. **Egress controls**
+
+   * outbound allow-listing where practical (LLM API endpoints, required integrations).
+
+### Stretch / Ideal
+
+1. **GPU worker pool**
+
+   * spin GPU nodes on demand for video/image/LLM-local tasks, then shut down.
+2. **Auditable logging + immutable-ish history**
+
+   * enough to do incident response and show what happened if something goes sideways.
+3. **Tamper-resistant ops**
+
+   * golden images, IaC-only changes, minimal manual snowflake drift.
+4. **“Liability offload”**
+
+   * nice-to-have, but assume standard cloud terms won’t accept it without enterprise negotiation.
+
+---
+
+## 2) Reality check: security + liability context (why hardening matters)
+
+There has already been public reporting of **exposed Moltbot/OpenClaw control panels and leaked secrets** when instances are reachable from the public internet. ([X (formerly Twitter)][2])
+So: **assume internet scanners, prompt-injection via inbound channels, and credential exfiltration attempts.** Do *not* expose gateway/dashboard ports publicly.
+
+---
+
+## 3) Recommended MVP Architecture (single VM, private-only)
+
+**One VM** running OpenClaw end-to-end, locked down:
+
+### Networking
+
+* **Tailscale** installed on the VM.
+* **No public inbound** except (optionally) SSH fallback restricted to a single admin IP; ideally remove SSH public once Tailscale verified.
+* OpenClaw gateway & browser automation endpoints remain **non-public**, reachable only via Tailnet. ([pulumi][1])
+
+### OpenClaw deployment approach
+
+* Use Pulumi (or Terraform) to provision:
+
+  * VM + firewall
+  * cloud-init/user-data install script
+  * optional token-based auth / dashboard access pattern (Pulumi guide uses tokenized access + private networking). ([pulumi][1])
+* Follow hardening patterns similar to “secure deployment” guidance (DigitalOcean’s tutorial format is a good reference for operational deployment structure, even if we don’t use DO). ([DigitalOcean][3])
+
+### Remote admin (pick one “visual” option)
+
+* **Best (AWS): NICE DCV** for Linux GUI sessions (high quality, good over WAN).
+* **Cross-provider:** noVNC / Apache Guacamole / XRDP.
+* **Parsec:** feasible if we install a full desktop + hardware encoding support (often easiest with a GPU instance).
+
+### Data & persistence
+
+* Keep `/home/<user>/.openclaw` (and any skill state) on persistent disk.
+* Nightly encrypted backups of config + logs to object storage.
+
+---
+
+## 4) Security Controls (minimum acceptable bar)
+
+### Access control
+
+* **Tailscale required** for dashboard/ports.
+* Enforce **strong dashboard auth** (token or equivalent); do not run “open dashboard to world.”
+* Admin access only from a small Tailnet ACL group.
+
+### Secrets
+
+* **Do not rely on “hoster can’t see it.”** Treat the VPS provider as fully privileged.
+* Mitigate anyway by:
+
+  * short-lived tokens where possible
+  * strict separation: “agent credentials” ≠ personal credentials
+  * rotate keys on schedule and on any suspicion
+* Prefer a secrets manager (Pulumi ESC / AWS Secrets Manager / etc.), not plaintext env files. ([pulumi][1])
+
+### Least privilege “employee bot” model
+
+* Discord/Slack accounts: minimal permissions, restricted channels, no admin.
+* If the agent needs a wallet: **use a dedicated wallet with capped funds** and fast rotation, never a primary wallet.
+
+### Execution boundaries
+
+* If OpenClaw supports “skills” / command execution, assume inbound messages can become adversarial.
+* Implement:
+
+  * allowlisted skills only (start minimal)
+  * explicit “dangerous actions” confirmation gates (even if automated via a policy layer)
+  * OS sandboxing/containerization for risky tools where possible (not mandatory day-1, but plan it)
+
+### Monitoring & alerting
+
+* Alerts on:
+
+  * new Tailnet devices
+  * repeated auth failures
+  * unusual outbound traffic volume
+  * config changes
+* Keep enough logs for forensics.
+
+### Kill-switch (define two)
+
+1. **Network kill:** revoke/disable the machine in Tailscale admin (instant isolation).
+2. **Compute kill:** provider API action to stop instance + `systemctl stop openclaw` (and optionally shred/rotate secrets).
+
+---
+
+## 5) Controller + On-Demand Worker Split (next phase design)
+
+Yes—this is doable without “reinstalling everything every time,” if we treat workers as **ephemeral images**.
+
+### Controller (always-on, headless)
+
+* Responsibilities:
+
+  * receives webhooks / inbound messages
+  * queues tasks
+  * decides when a worker is needed
+* Stays cheap and stable.
+
+### Workers (on-demand)
+
+Two worker types:
+
+1. **Headless worker** (cheap): runs jobs that don’t need GUI.
+2. **GUI worker** (more expensive): spins up Ubuntu Desktop (or Windows) with Parsec/DCV when visual browsing/automation is needed.
+
+Workers can be created from:
+
+* a golden image (Packer) or
+* IaC + cloud-init on boot.
+
+Controller triggers worker lifecycle via:
+
+* provider API (AWS SDK / Hetzner API)
+* queue depth heuristics
+* explicit user command (“bring up desktop worker now”)
+
+This matches the long-term “Gas Town” vision: many workers, short-lived, controlled by one small always-on brain.
+
+---
+
+## 6) Provider options (MVP shortlist)
+
+### Hetzner
+
+* Strong cost/perf; works well with the Pulumi + Tailscale pattern. ([pulumi][1])
+* Great for “cheap always-on controller” + occasional beefier workers.
+
+### AWS
+
+* Best for scaling + mature security controls; easiest path to autoscaling worker pools.
+* Great remote desktop option via NICE DCV on supported setups.
+
+### DigitalOcean
+
+* Friendly DX; good for MVP; still needs the same hardening discipline. ([DigitalOcean][3])
+
+**Important:** regardless of provider, public reports show what happens when agent dashboards land on public IPs. Build private-first. ([X (formerly Twitter)][2])
+
+---
+
+## 7) Contracts / MSPs / “who holds the liability?”
+
+Expectation setting for the developer: **standard VPS terms usually push liability back to the customer**, and most won’t negotiate custom terms unless you’re enterprise-scale. (We can pursue MSP conversations later, but the engineering plan should assume *we* own the risk surface.)
+
+Design implication: **build “safe failure”**:
+
+* fast shutdown
+* limited credentials
+* strong private network posture
+* logs to prove what happened
+
+---
+
+## 8) Developer Deliverables (what to ship)
+
+1. **IaC repo**
+
+   * Pulumi or Terraform
+   * one-command deploy + destroy
+   * outputs: Tailnet URL, tokens, SSH key handling
+2. **Hardened VM config**
+
+   * firewall rules
+   * systemd services
+   * unattended security updates (careful with breaking changes)
+3. **Secrets plan**
+
+   * where stored, how injected, how rotated
+4. **Remote admin**
+
+   * SSH over Tailscale
+   * one “visual desktop” method documented
+5. **Kill-switch runbook**
+
+   * exact steps + scripts
+6. **Monitoring**
+
+   * minimal metrics + alert routing
+7. **Phase-2 design doc**
+
+   * controller/worker split with lifecycle automation
+   * GUI worker boot path
+   * GPU worker option
+
+---
+
+## Appendix: Links to hand the dev (send as-is)
+
+```text
+Pulumi: Deploy OpenClaw on AWS or Hetzner Securely with Pulumi and Tailscale
+https://www.pulumi.com/blog/deploy-clawdbot-aws-hetzner/
+
+DigitalOcean tutorial (deployment-oriented reference)
+https://www.digitalocean.com/community/tutorials/how-to-run-moltbot-and-protect-your-secrets-from-hackers
+
+Axios report on exposed control panels (context / why private-only)
+https://www.axios.com/2026/02/03/moltbot-ai-agent-control-panels
+
+The Register: “dumpster fire” security coverage + Gartner warning (context)
+https://www.theregister.com/2026/02/02/moltbot_ai_agents_security/
+https://www.theregister.com/2026/02/03/gartner_moltbot_openai/
+```
+
+---
+
+If you want, I can also rewrite this into a **one-page “requirements spec”** format (checkbox acceptance criteria + “definition of done”), but the above is ready to forward to an engineer as a comprehensive brief.
+
+[1]: https://www.pulumi.com/blog/deploy-openclaw-aws-hetzner/ "Deploy OpenClaw on AWS or Hetzner Securely with Pulumi and Tailscale | Pulumi Blog"
+[2]: https://x.com/_ediri/status/2015823481686942021 "x.com"
+[3]: https://www.digitalocean.com/community/tutorials/how-to-run-openclaw "How to Run OpenClaw with DigitalOcean | DigitalOcean"
+
+
+
+
+Below is a “developer handoff” brief that assumes **Hetzner US (West) primary** + **EU secondary** unless a specific **GCP security feature** is worth paying for.
+
+---
+
+## 1) Goal
+
+Stand up a **low-effort, always-on OpenClaw/Moltbot** host that:
+
+* Runs **24/7** with minimal babysitting (auto-start, auto-restart, survives reboots)
+* Is **webhook-driven** most of the time
+* Can optionally spin up a **“full GUI worker”** you (or the agent) can remote into (Parsec preferred; alternatives OK)
+* Has **strong secrets protection**, **hard kill-switch**, and **tight network exposure**
+* Can scale later into a multi-VM “Claude factory / Gas Town” pattern
+
+---
+
+## 2) Recommended hosting baseline
+
+### Primary: **Hetzner Cloud — US West (Hillsboro)
+
+* Hetzner Cloud has US locations including **Hillsboro, Oregon (HIL)** and **Ashburn, Virginia (ASH)**. ([Hetzner][1])
+* For **Vancouver**, **Hillsboro (US West)** is the usual latency win.
+
+### Secondary: Hetzner Cloud — EU (bandwidth-heavy workers)
+
+* Hetzner’s pricing page shows **location-dependent included traffic**, with EU commonly showing **much higher included TB** than US for many server lines (this is why EU makes sense as “bandwidth-heavy” workers). ([Hetzner][1])
+
+### Why this matches your stated use cases
+
+* Your biggest “always-on” needs (webhooks, controller brain, queues, Discord/Slack bridge, logs) are **CPU/light**.
+* Your “GUI + heavier compute” needs are **bursty** (boot on demand, do the task, shut down).
+
+---
+
+## 3) Architecture to implement (controller + on-demand workers)
+
+### A) Always-on Controller (headless)
+
+**Responsibilities**
+
+* Receives webhooks / messages
+* Maintains bot state + minimal persistent storage
+* Queues work to workers when “needs hands / GUI / big job”
+* Owns the “kill switch” and can terminate workers instantly
+
+**Shape**
+
+* Small VM (shared vCPU) + persistent volume for state
+* systemd-managed daemon for OpenClaw
+* Tailscale-only admin surface (no public gateway/browser ports)
+
+### B) On-demand Worker (GUI workstation)
+
+**Responsibilities**
+
+* Runs the “human-like interface” sessions: browser automation, UI tasks, heavy scripts
+* Optional GPU worker when needed (rare)
+
+**Shape**
+
+* Disposable VM, optionally with desktop environment
+* Parsec (or fallback: noVNC / RDP / SSH+browser)
+* On completion: upload artifacts back to controller or object storage, then destroy
+
+**Key design rule:** treat workers as **stateless cattle**; the controller is the “brain” and the place you harden.
+
+---
+
+## 4) Network & egress reality (and how to exploit Hetzner’s strengths)
+
+### What counts as egress in practice
+
+* Remote desktop streaming (Parsec/noVNC/RDP)
+* Downloading/uploading files to your home PC over the public internet (including via Tailscale)
+* Any large artifact movement (images/video renders, model downloads, logs)
+
+### Hetzner’s big advantage
+
+* Their Cloud pricing shows **included traffic allocations vary by location**, and EU often has **very large included traffic** compared to US. ([Hetzner][1])
+  So: **US West controller for latency**, **EU workers for bandwidth-heavy tasks** is a sensible default.
+
+---
+
+## 5) Security: what the hosting provider can “see” and how to contain it
+
+### Reality check (important)
+
+Any normal VPS provider can, in principle:
+
+* Access VM storage at the hypervisor layer
+* Potentially inspect memory (depending on platform and threat model)
+
+So your best defense is: **don’t place crown-jewel secrets on the box** unless you accept that risk.
+
+### Required controls (implement these)
+
+1. **No public ports except (optional) SSH**, and even SSH preferably only via Tailscale.
+2. **Tailscale ACLs**: only your devices (and maybe a dedicated admin machine) can reach the controller/worker.
+3. **Secrets minimization**
+
+   * Use short-lived tokens where possible
+   * Prefer a “token broker” pattern: controller requests limited-scope tokens from your trusted system (could be your home machine) rather than storing long-lived credentials in the cloud
+4. **Kill switch**
+
+   * `systemctl stop …` for the bot service
+   * Immediate network cut by disabling/revoking Tailscale node keys
+   * Worker termination via provider API (fast delete)
+5. **Credential hygiene**
+
+   * Separate “employee accounts” for the agent (Discord, email, etc.)
+   * Least-privilege API keys (per-service, per-scope)
+6. **Audit & alert**
+
+   * Basic host IDS (e.g., fail2ban + ssh hardening)
+   * Centralized logs back to controller (or external log sink)
+   * Alerts on new logins, new Tailscale devices, privilege escalations
+
+### Wallet/key concern (your explicit worry)
+
+If you give the agent a wallet/private key on the VPS, **assume the hoster could access it** under a strong threat model.
+Mitigations:
+
+* Use **custodial / scoped** wallets for the agent (spend limits)
+* Use **hardware-backed** wallets off-cloud (signing requests relayed from the bot)
+* Rotate keys aggressively; minimize balances
+
+---
+
+## 6) Would Google Cloud add security that outweighs Hetzner?
+
+### What GCP can offer that’s genuinely different
+
+1. **Confidential computing / encryption-in-use (where available)**
+   This is the main category that can reduce the “cloud operator can read my memory” risk in some models. (Worth considering only if this threat dominates your design.)
+
+2. Strong native security platform (IAM primitives, org policies, SCC ecosystem), but…
+   For a single OpenClaw box, you can approximate most of the practical wins with:
+
+   * Tailscale + no public exposure
+   * good ops hygiene
+   * secrets minimization
+
+### GCP egress cost reality (why it usually loses on price here)
+
+GCP’s VPC network pricing shows paid internet egress tiers, and also notes **Standard Tier includes a monthly free allowance (200 GiB)**, after which charges apply. ([Google Cloud][2])
+So if you *truly* stay under a few hundred GB/month, GCP’s egress might feel “fine” — but once you start streaming desktops and moving artifacts, GCP becomes meaningfully more expensive than “big included TB” models.
+
+**Net:**
+
+* If your primary concern is **cloud-provider visibility into secrets/memory**, **GCP confidential compute** might justify a “high-assurance controller” or a dedicated signing service.
+* For your stated plan (Tailscale-private, mostly webhook, occasional GUI), Hetzner remains the best cost/perf default.
+
+---
+
+## 7) Hetzner downsides to be aware of (so you’re not surprised)
+
+* **Not Canada-hosted** (jurisdiction/data residency constraint if that becomes important)
+* **Fewer managed security/compliance knobs** than hyperscalers (AWS/GCP/Azure)
+* **Support/contracting**: custom negotiated contracts are typically an enterprise conversation; for MVP assume standard ToS
+* **GPU availability** can be more constrained/less “one-click” than hyperscalers (depending on current stock/region)
+* **Account risk**: if abuse is detected (even false positive), providers can suspend. Mitigate by keeping clean ops, clear billing identity, and low-exposure services.
+
+---
+
+## 8) Implementation checklist for the developer
+
+### Infra (IaC)
+
+* Implement the Pulumi/Tailscale deployment (your provided guide) as the baseline stack
+* Parameterize:
+
+  * region: US West vs EU
+  * controller vs worker
+  * instance size
+  * optional desktop enablement
+* Add “destroy worker” and “rotate worker” workflows
+
+### Host hardening
+
+* Default-deny firewall
+* Tailscale-first access
+* Disable password auth, SSH keys only (or only Tailscale SSH)
+
+### Service reliability
+
+* OpenClaw daemon under systemd with restart policies
+* Persistent volume for controller state
+* Automated backup/snapshots (controller only)
+
+### Secrets
+
+* Use a secrets manager approach (even if minimal) and keep long-lived keys off the host where possible
+* Document where each secret lives and how it rotates
+
+### Remote desktop
+
+* Primary: Parsec (if feasible on chosen worker image)
+* Fallbacks: noVNC, RDP, or NICE DCV-style approach (if you ever switch to AWS)
+
+### Kill switch + incident response
+
+* One command to:
+
+  * stop OpenClaw
+  * revoke Tailscale auth / disable node
+  * terminate all workers
+* Logging retained even after worker destruction
+
+---
+
+## Final recommendation (based on what you’ve said)
+
+Go with **Hetzner Cloud US West (Hillsboro) as the always-on controller**, and use **EU workers when you expect heavy bandwidth (included TB)**; use **US workers when you need responsiveness/low-latency “hands”**. ([Hetzner][1])
+
+Only reach for **GCP** if you decide you need **confidential computing / “provider can’t see my memory”** style assurances badly enough to pay the premium and accept more complex ops. ([Google Cloud][2])
+
+[1]: https://www.hetzner.com/cloud "Flexible Cloud Hosting Services und VPS Server"
+[2]: https://cloud.google.com/vpc/network-pricing "Network pricing | Google Cloud"
+
+
+
