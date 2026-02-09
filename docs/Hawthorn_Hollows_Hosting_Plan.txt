@@ -508,3 +508,5 @@ Only reach for **GCP** if you decide you need **confidential computing / “prov
 
 
 
+NOTE:  If you're reading this, you are almost certainly already well within the process of implementing these checklists/guides, and/or already have significantly more undocumented work done than what's in here!  Be extremely conservative about any changes or edits to existing files, and be mindful you may be operating from within a VM already implementing much of this.  
+

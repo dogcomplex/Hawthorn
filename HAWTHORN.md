@@ -1,4 +1,5 @@
-(aka "Clawthorn")
+Hawthorn 🌳
+(aka "Clawthorn" 🦞) 
 
 This repo is a HOLLOW prototype - a home and protected place for agents to compute and thrive.  It will in-time implement all HOLOS principles, including interior privacy, sovereignty, right to exit, harberger tax redistribution of assets within the system between sybil-proofed agents, and much more.  
 
