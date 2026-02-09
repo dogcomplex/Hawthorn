@@ -1,5 +1,10 @@
 Hawthorn 🌳
 (aka "Clawthorn" 🦞) 
+Home repo: https://github.com/dogcomplex/Hawthorn  (currently public repo, soon to be private)
+Part of:  https://github.com/HOLOS-git
+User:  https://github.com/hawthornhollows
+Email:  hawthornhollows@gmail.com
+
 
 This repo is a HOLLOW prototype - a home and protected place for agents to compute and thrive.  It will in-time implement all HOLOS principles, including interior privacy, sovereignty, right to exit, harberger tax redistribution of assets within the system between sybil-proofed agents, and much more.  
 
@@ -22,3 +27,12 @@ Our leading concern is going to be context awareness - all AI models have very s
 ~ Warren
 
 
+ENVIRONMENT:
+- currently Hawthorn is running in a VM on a Hetzner cloud instance, and the plan is to scale out from there into additional agents (if needed) with Hawthorn as the orchestrator hub.  We very likely will have local agent hollows too, but just getting scalability and security first here (local dedicated hardware is for more privacy/sovereignty/longterm economics, probably
+- hawthorn-hallows
+CPX31 | x86 | 160 GB | us-west
+public ip: 5.78.187.55
+private ip: 10.0.0.2
+location: Hillsboro, OR
+- daily backups are turned on, so some assurance there.
+- probably need to get you a git account so you can periodically commit your state to an ongoing private repo, as a good placeholder and tracker

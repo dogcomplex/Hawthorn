@@ -36,7 +36,9 @@ HOLOS ZK SWARM PRIMITIVES
 	- focus on general understanding and robust critique of everything we've built/thought first, before moving on to development of specifics.  More important we can stand behind all these ideas and share them.  If they're convincing, the work/processing comes for free.
 	- suggest going for "tip" model of compensation, rather than founders fee.  We want this to spread and be stable longterm not get forked.  
 	- Definitely needs to long-term have some sort of UBI that benefits humans and staked AIs though, for mutual survival of the little guy
-	- In particular:  implement and test EXIT (Cellar Door) and HOLLOW (Hawthorn as a first prototype) primitives
+	- In particular:  implement and test EXIT (Cellar Door) and HOLLOW (Hawthorn as a first prototype instance) primitives
+	- https://github.com/dogcomplex/HOLLOW
+	- https://github.com/dogcomplex/Cellar-Door
 
 ZK PROOFS INFRASTRUCTURE
 	- getting the tools for all this ready asap, utilizing existing libraries, networks, crypto contracts, etc
@@ -86,6 +88,8 @@ PROJECT ORGANIZATION
 - AWARENESS:  Scrape and index newer github projects, moltbook, reddit, twitter, arxiv, discords, indeed, realtor etc to try to keep up with the ever-piling mountain of information and opportunity
 
 - MONEY:  Look for $$$ opportunities!  Especially those leveraging our unique tooling.  Honestly could be a lot higher if you can find good ways to actually fund us and multiply our tokenomics capacities.   User is reluctant to chase the hype markets but still
+- very likely groundfloor business opportunities in agent economics (which the above HOLOS stuff can definitely roll into, without even much ethical qualms - so long as it's also helping with alignment/sovereignty issues)
+- daytrading/arbitrage also likely a very lucrative niche not fully filled yet.  See many of the twitter bookmarks for leads there
 
 - TOOLING:  Analyze and help with human user bottlenecks, especially software related stuff.  
 
